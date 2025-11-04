@@ -68,7 +68,7 @@ int main() {
 
     // 4. 循环查询DDR带宽利用率（每秒一次）
     printf("\n开始监控DDR带宽利用率（按Ctrl+C停止）...\n");
-    printf("时间(s) | DDR带宽利用率(%%)\n");
+    printf("时间(s) | DDR带宽利用率(%%) | 内存利用率(%%)\n");
     printf("-------------------------\n");
     int count = 0;
     while (1) {
@@ -83,10 +83,17 @@ int main() {
         );
         // ret = dcmi_get_device_temperature(card_id, device_id, &temperature);
 
+        unsigned int ddr_util = 0;
+        ret = dcmi_get_device_utilization_rate(
+            card_id,
+            device_id,
+            DCMI_UTILIZATION_RATE_DDR,  // 指定查询DDR带宽利用率
+            &ddr_util
+        );
 
         // 输出结果
         if (ret == DCMI_OK) {
-            printf("%8d | %16d\n", count, ddr_bandwidth_util);
+            printf("%8d | %16d | %16d\n", count, ddr_bandwidth_util, ddr_util);
         } else {
             printf("%8d | 查询失败，错误码=%d\n", count, ret);
             print_error(ret);
