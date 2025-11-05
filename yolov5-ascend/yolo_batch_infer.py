@@ -2,7 +2,6 @@
 # -*- coding: utf-8 -*-
 
 import os
-import sys
 import time
 import cv2
 import torch
@@ -102,9 +101,7 @@ def preprocess(img_path, input_shape=(640, 640)):
     img_resized = resize_img(org_img, input_shape)
     img_resized = img_resized.astype(np.float32) / 255.0
     img_resized = img_resized.transpose(2, 0, 1)  # HWC -> CHW
-    img_resized = np.expand_dims(img_resized, 0)  # batch
-    img_bytes = np.frombuffer(img_resized.tobytes(), np.float32)
-    return org_img, img_resized, img_bytes
+    return org_img, img_resized
 
 
 def draw_box(image, boxes, names, scores):
@@ -152,32 +149,53 @@ def process_batch(
     output_dir,
     output_format,
 ):
+    import gc
+
     org_imgs, img_tensors, rel_paths = [], [], []
+
+    # 1️⃣ 读取并预处理图片
     for img_path, rel_path in batch:
         if not is_file_ready(img_path):
             print(f"[SKIP] {rel_path} not ready")
             continue
-        org_img, img_tensor, _ = preprocess(img_path, input_shape=input_size)
+        org_img, img_tensor = preprocess(img_path, input_shape=input_size)
         org_imgs.append(org_img)
         img_tensors.append(img_tensor)
         rel_paths.append(rel_path)
+
     if len(img_tensors) == 0:
         return
+
+    # 2️⃣ 构建批次输入 (batch, C, H, W)
     batch_input = np.stack(img_tensors, axis=0).astype(np.float32)
     batch_input_bytes = np.frombuffer(batch_input.tobytes(), np.float32)
 
     start = time.time()
+    # 3️⃣ 调用 Net.run 执行推理，并自动释放 host/device 内存
     result = net.run([batch_input_bytes])
-    end = time.time()
 
-    pred = np.frombuffer(bytearray(result[0]), dtype=np.float32)
-    pred = pred.reshape(len(img_tensors), 25200, -1)
-    pred = torch.tensor(pred)
+    # 4️⃣ 自动 reshape 输出
+    pred_bytes = bytearray(result[0])
+    pred_flat = np.frombuffer(pred_bytes, dtype=np.float32)
 
+    batch_size = len(img_tensors)
+    num_classes = len(labels)
+    pred_size = num_classes + 5
+    num_features = pred_flat.size // batch_size
+    if num_features % pred_size != 0:
+        raise ValueError(f"Output size {num_features} is not divisible by {pred_size}")
+
+    num_boxes = num_features // pred_size
+    pred = torch.tensor(
+        pred_flat.reshape(batch_size, num_boxes, pred_size), dtype=torch.float32
+    )
+
+    # 5️⃣ NMS
     preds = non_max_suppression(
         pred, conf_thres, iou_thres, filter_classes, agnostic_nms, max_det=max_det
     )
 
+    # 6️⃣ 处理每张图片的结果
     for i, det in enumerate(preds):
         org_img = org_imgs[i]
         rel_path = rel_paths[i]
@@ -191,6 +209,7 @@ def process_batch(
             for *xyxy, conf, cls in reversed(det):
                 detections.append((cls, xyxy, conf))
 
+        # 保存 label
         if output_format in ["label", "all"]:
             label_dir = os.path.join(output_dir, "label", subdir)
             os.makedirs(label_dir, exist_ok=True)
@@ -200,6 +219,7 @@ def process_batch(
                     line = (cls, *xyxy, conf)
                     f.write(("%g " * len(line)).rstrip() % line + "\n")
 
+        # 保存 image
         if output_format in ["image", "all"]:
             image_dir = os.path.join(output_dir, "image", subdir)
             os.makedirs(image_dir, exist_ok=True)
@@ -214,9 +234,26 @@ def process_batch(
             else:
                 out_img = org_img
             cv2.imwrite(output_path, out_img)
+            if "out_img" in locals():
+                del out_img
+
+        del org_img, detections
+
+    # 7️⃣ 释放 Net 内部 host/device memory
+    for item in result:
+        if isinstance(item, dict) and "buffer" in item:
+            acl.rt.free_host(item["buffer"])  # 释放 malloc_host
+    del result
+
+    # 8️⃣ 批次内存释放
+    del org_imgs, img_tensors, rel_paths, pred, preds
+    del batch_input, batch_input_bytes, pred_bytes, pred_flat
+    gc.collect()
+
+    end = time.time()
 
     print(
-        f"Processed batch of {len(img_tensors)} images, avg {((end - start) / len(img_tensors)):.3f}s/img"
+        f"Processed batch of {batch_size} images, use {(end - start):.3f}s, avg {((end - start) / batch_size):.3f}s/img"
     )
 
 

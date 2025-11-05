@@ -102,7 +102,7 @@ int main() {
         }
 
         count++;
-        sleep(1);  // 每秒查询一次
+        sleep(0.5);  // 每秒查询一次
     }
 
     return 0;
