@@ -13,6 +13,7 @@ from acl_net import Net
 from PIL import Image
 from torchvision.ops import nms
 import acl
+from concurrent.futures import ThreadPoolExecutor
 
 
 # ----------------- 工具函数 -----------------
@@ -135,6 +136,20 @@ def is_file_ready(file_path, interval=0.01, max_wait=5.0):
     return False
 
 
+def preprocess_parallel(image_paths, input_shape):
+    def preprocess_single(img_path):
+        if not is_file_ready(img_path):
+            return None, None
+        org_img, img_tensor = preprocess(img_path, input_shape=input_shape)
+        return org_img, img_tensor
+
+    with ThreadPoolExecutor() as executor:
+        results = list(executor.map(preprocess_single, image_paths))
+
+    org_imgs, img_tensors = zip(*[res for res in results if res[0] is not None])
+    return list(org_imgs), list(img_tensors)
+
+
 # ----------------- 批量推理函数 -----------------
 def process_batch(
     net,
@@ -153,15 +168,9 @@ def process_batch(
 
     org_imgs, img_tensors, rel_paths = [], [], []
 
-    # 1️⃣ 读取并预处理图片
-    for img_path, rel_path in batch:
-        if not is_file_ready(img_path):
-            print(f"[SKIP] {rel_path} not ready")
-            continue
-        org_img, img_tensor = preprocess(img_path, input_shape=input_size)
-        org_imgs.append(org_img)
-        img_tensors.append(img_tensor)
-        rel_paths.append(rel_path)
+    # 1️⃣ 并行读取并预处理图片
+    img_paths, rel_paths = zip(*batch)
+    org_imgs, img_tensors = preprocess_parallel(img_paths, input_size)
 
     if len(img_tensors) == 0:
         return
@@ -173,7 +182,7 @@ def process_batch(
     start = time.time()
     # 3️⃣ 调用 Net.run 执行推理，并自动释放 host/device 内存
     result = net.run([batch_input_bytes])
-
+    end = time.time()
     # 4️⃣ 自动 reshape 输出
     pred_bytes = bytearray(result[0])
     pred_flat = np.frombuffer(pred_bytes, dtype=np.float32)
@@ -249,8 +258,6 @@ def process_batch(
     del org_imgs, img_tensors, rel_paths, pred, preds
     del batch_input, batch_input_bytes, pred_bytes, pred_flat
     gc.collect()
-
-    end = time.time()
 
     print(
         f"Processed batch of {batch_size} images, use {(end - start):.3f}s, avg {((end - start) / batch_size):.3f}s/img"

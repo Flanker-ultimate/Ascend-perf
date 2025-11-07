@@ -1,18 +1,20 @@
 # test Ascend DRAM bandwidth
 ## change model input shape
 ```
-python3 export.py --weights yolov5s.pt --opset 12 --simplify --include onnx --batch-size 100
+python3 export.py --weights yolov5s.pt --opset 12 --simplify --include onnx --batch-size 2
 ```
 
 ```
-atc --input_shape="images:1,3,640,640" --input_format=NCHW --output="yolov5s" --soc_version=Ascend310 --framework=5 --model="yolov5s.onnx" --output_type=FP32
+atc --input_shape="images:2,3,640,640" --input_format=NCHW --output="yolov5s" --soc_version=Ascend310 --framework=5 --model="yolov5s.onnx" --output_type=FP32
 ```
 
 launch batch inference:
 ```
+cd yolov5-ascend
+
 python3 yolo_batch_infer.py --input-dir /home/ubuntu/pics_convert \
   --output-dir /home/ubuntu/perf_test/results \
-  --weights /home/ubuntu/perf_test/yolov5-ascend/ascend/yolov5s20b.om \
+  --weights /home/ubuntu/perf_test/yolov5-ascend/ascend/yolov5s1b.om \
   --labels /home/ubuntu/perf_test/yolov5-ascend/ascend/yolov5.label \
-  --batch-size 20
+  --batch-size 1
 ```
