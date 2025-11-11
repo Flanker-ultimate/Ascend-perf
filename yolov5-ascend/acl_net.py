@@ -207,13 +207,8 @@ class Net(object):
 
     def run(self, images):
         acl.rt.set_context(self.context)
-        start = time.time()
         self._data_from_host_to_device(images)
-        end = time.time()
-        print(f"Data transfer time: {end - start} seconds")
         self.forward()
-        start = time.time()
-        print(f"Forward time: {start - end} seconds")
         return self._data_from_device_to_host()
 
     def forward(self):
