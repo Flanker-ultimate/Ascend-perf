@@ -8,3 +8,4 @@ clean:
 	rm -rf build
 	rm -rf results
 	rm -rf yolov5-ascend/__pycache__
+	rm -rf yolov5-ascend/tmp_input_lists
